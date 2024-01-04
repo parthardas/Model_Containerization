@@ -1,0 +1,60 @@
+name: ML Model Training and Deployment
+
+on:
+  workflow_dispatch:
+
+jobs:
+  train-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.11'
+
+    - name: Install Python dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Train ML Model
+      run: |
+        cd api/utils && python train.py ../../data/Score.csv
+
+    # we are trying to buid the deployment and train image and push to docker hub
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v1
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v2
+      with:
+        push: true
+        tags: murthy95/sklearn-deployment:latest
+        context: .
+        file: ./deployments/api.Dockerfile
+
+    - name: Copy Docker image to EC2
+      uses: appleboy/scp-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        source: "./docker-compose.yaml"
+        target: "/home/ubuntu"
+
+    - name: Deploy on EC2
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.EC2_HOST }}
+        username: ${{ secrets.EC2_USER }}
+        key: ${{ secrets.SSH_PRIVATE_KEY }}
+        script: |
+          docker pull murthy95/sklearn-deployment:latest
+          docker pull murthy95/sklearn-deployment-frontend:latest
+          docker-compose down
+          docker-compose up -d
